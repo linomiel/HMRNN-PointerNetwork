@@ -4,6 +4,7 @@ from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.python.ops.math_ops import sigmoid
 from tensorflow.python.ops.math_ops import tanh
 from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import LSTMStateTuple
+from tensorflow.contrib.rnn import LSTMCell
 from tensorflow.contrib import seq2seq
 
 from decoder import dynamic_rnn_decoder
@@ -60,41 +61,41 @@ def _lstm_gates(logits, num_splits=4, axis=1, activation=tanh, forget_bias=0.0):
     _cell = activation(_cell)
     return _input, _forget, _output, _cell
 
-class LSTMCell(RNNCell):
-  """LSTM recurrent network cell.
-  """
-  def __init__(self, num_units, forget_bias=0.0, activation=tanh):
-    """Initialize the LSTM cell.
-    Args:
-      num_units: int, the number of units in the LSTM cell.
-      forget_bias: float, The bias added to forget gates (see above).
-      activation: Activation function of the inner states.
-    """
-    self.num_units = num_units
-    self.forget_bias = forget_bias
-    self.activation = activation
+# class LSTMCell(RNNCell):
+#   """LSTM recurrent network cell.
+#   """
+#   def __init__(self, num_units, forget_bias=0.0, activation=tanh):
+#     """Initialize the LSTM cell.
+#     Args:
+#       num_units: int, the number of units in the LSTM cell.
+#       forget_bias: float, The bias added to forget gates (see above).
+#       activation: Activation function of the inner states.
+#     """
+#     self.num_units = num_units
+#     self.forget_bias = forget_bias
+#     self.activation = activation
 
-  @property
-  def state_size(self):
-    return LSTMStateTuple(self.num_units, self.num_units)
+#   @property
+#   def state_size(self):
+#     return LSTMStateTuple(self.num_units, self.num_units)
 
-  @property
-  def output_size(self):
-    return self.num_units
+#   @property
+#   def output_size(self):
+#     return self.num_units
 
-  def __call__(self, inputs, state, scope='lstm'):
-    """Long Short-Term Memory (LSTM) cell.
-    """
-    # Parameters of gates are concatenated into one multiply for efficiency.
-    c, h = state
-    logits = _affine([inputs, h], 4 * self.num_units, scope=scope)
-    i, f, o, j = _lstm_gates(logits, forget_bias=self.forget_bias)
-    # Update the states
-    new_c = c * f + i * j
-    new_h = o * self.activation(new_c)
-    # Update the returns
-    new_state = LSTMStateTuple(new_c, new_h)
-    return new_h, new_state
+#   def __call__(self, inputs, state, scope='lstm'):
+#     """Long Short-Term Memory (LSTM) cell.
+#     """
+#     # Parameters of gates are concatenated into one multiply for efficiency.
+#     c, h = state
+#     logits = _affine([inputs, h], 4 * self.num_units, scope=scope)
+#     i, f, o, j = _lstm_gates(logits, forget_bias=self.forget_bias)
+#     # Update the states
+#     new_c = c * f + i * j
+#     new_h = o * self.activation(new_c)
+#     # Update the returns
+#     new_state = LSTMStateTuple(new_c, new_h)
+#     return new_h, new_state
 
 
 
@@ -205,35 +206,34 @@ class AttentionModule(object):
       #generates a probability 1D vector.
         with tf.variable_scope(scope):
           W_1 = tf.get_variable(
-              "W_1", [hidden_dim, enc_units_1], initializer=self.initializer)
+              "W_1", [self.hidden_dim, self.enc_units_1], initializer=self.initializer)
           W_2 = tf.get_variable(
-              "W_2", [hidden_dim, units], initializer=self.initializer)
+              "W_2", [self.hidden_dim, self.units], initializer=self.initializer)
           W_3 = tf.get_variable(
-              "W_3", [hidden_dim, enc_units_2], initializer=self.initializer)
+              "W_3", [self.hidden_dim, self.enc_units_2], initializer=self.initializer)
           W_4 = tf.get_variable(
-              "W_4", [hidden_dim, enc_units_2], initializer=self.initializer)
+              "W_4", [self.hidden_dim, self.enc_units_2], initializer=self.initializer)
           W_5 = tf.get_variable(
-              "W_5", [hidden_dim, units], initializer=self.initializer)
+              "W_5", [self.hidden_dim, self.units], initializer=self.initializer)
           v_2 = tf.get_variable(
-              "v", [1,hidden_dim], initializer=self.initializer)
-          #collects the shapes
-          enc1_shape = enc1.shape
-          enc2_shape = enc2.shape
-          dec_shape = dec.shape
+              "v_2", [1,self.hidden_dim], initializer=self.initializer)
           #collapses the batch and time dimensions together
-          enc1 = tf.reshape(enc1, [-1, enc1_shape[2]])
-          enc2 = tf.reshape(enc2, [-1, enc2_shape[2]])
-          #dec is already 1D
+          enc1 = tf.reshape(enc1, [-1, self.enc_units_1])
+          enc2 = tf.reshape(enc2, [-1, self.enc_units_2])
+          #dec is already 2D [batch, vector]
           #applies the matmul op to each input
           apply_mult = lambda matrix, init, x : tf.squeeze(tf.matmul(matrix, tf.expand_dims(x,1)))
-          Enc_1 = tf.scan(partial(apply_mult, W_1) , enc1)
-          Dec_1 = tf.squeeze(tf.matmul(W_2,tf.expand_dims(dec,1)))
-          Enc_2 = tf.scan(partial(apply_mult, W_4), enc2)
-          Dec_2 = tf.squeeze(tf.matmul(W_5,tf.expand_dims(dec,1)))
-          # transpose of v_2?
-          B = tf.scan(partial(apply_mult, v_2), Enc_2 + Dec_2)
+          Enc_1 = tf.scan(partial(apply_mult, W_1) , enc1, initializer = tf.zeros(self.hidden_dim))
+          Dec_1 = tf.scan(partial(apply_mult, W_2) , dec, initializer = tf.zeros(self.hidden_dim))
+          Enc_2 = tf.scan(partial(apply_mult, W_4), enc2, initializer = tf.zeros(self.hidden_dim))
+          Dec_2 = tf.scan(partial(apply_mult, W_5) , dec, initializer = tf.zeros(self.hidden_dim))
+          # add is supposed to support broadcasting.
+          B = tf.scan(partial(apply_mult, v_2), tf.add(Enc_2, Dec_2), initializer = tf.zeros(())  )
           b = tf.nn.softmax(B)
-          c = tf.reduce_sum(Dec_2,b)
+          
+          apply_b = lambda init, (scalar, vec) : tf.scalar_mul(scalar,vec)
+          weighted_dec2 = tf.scan(apply_b, (b,Dec_2), initializer = tf.zeros_like(Dec_2[0]))
+          c = tf.reduce_sum(weighted_dec2, axis = 0, name = 'c')
           #note that v_1 has shape [None, hidden_dim] != v_2.shape
           v_1 = tf.scan(lambda init, x: tf.matmul(W_3,x), c)
           scores = tf.scan(lambda init, (x, y): tf.matmul(x, y,), (v_1,Enc_1 + Dec_1))
@@ -272,6 +272,8 @@ class AttentionModule(object):
         final_enc_state =  tf.concat([final1,final2],1, name = 'final_enc_state')
         W_convert = tf.get_variable("W_convert", [2*self.units, self.enc_units_1+self.enc_units_2], initializer = self.initializer)#In order to keep an independent unit size. A good idea?
         cell_state = tf.scan(lambda init, x: tf.squeeze(tf.matmul(W_convert,tf.expand_dims(x,1))), final_enc_state, initializer = tf.zeros([2*self.units]), name = 'decorder_fn_cell_state') #expand_dims for shape coherance.
+        c,h = tf.split(cell_state,2, axis= 1)
+        cell_state = LSTMStateTuple(c,h)
         next_input = cell_input
         done = tf.zeros([batch_size,], dtype=tf.bool)
       else:
