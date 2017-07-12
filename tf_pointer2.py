@@ -70,8 +70,9 @@ class AttentionModule(object):
     self.initializer = initializer
 
   def __call__(self, inputs, state):
-
-
+    #The first state has to be handled here.
+    #How to differentiate between train and test time, while sharing the cell? 
+    pass
 
 
 def input_fn(sampled_idx, enc1):
@@ -82,7 +83,7 @@ def input_fn(sampled_idx, enc1):
 class AttentionCell(RNNCell):
 
   def __init__(self, units, hidden_dim, enc_units_1, enc_units_2, f_bias = 0.0, activation = tanh, num_glimpse = 1, initializer = None):
-    self.units = units
+    self.units = units # so far, units = enc_units_1 is necessary. cf call functions
     self.hidden_dim = hidden_dim
     self.enc_units_1 = enc_units_1
     self.enc_units_2 = enc_units_2
@@ -156,8 +157,8 @@ class AttentionCell(RNNCell):
 
   def __call__(self, inputs, state, scope ='attention_cell'):
     #inputs is a tuple: (enc1, enc2, main_input) with
-      # enc1.shape = [batch_size*enc_units_1]
-      # enc1.shape = [batch_size*enc_units_1]
+      # enc1.shape = [batch_size*time*enc_units_1]
+      # enc1.shape = [batch_size*time*enc_units_1]
       # main_input = [batch_size*units]
     #state is a LSTMStateTuple (c,h) where c.shape = h.shape = [batch_size*units]
       # The first state has to be initialized out of the cell!
@@ -168,10 +169,13 @@ class AttentionCell(RNNCell):
     is_zero = tf.equal(main_input, tf.zeros_like(main_input))
     default_input = tf.scan( lambda init, x : init & x, is_zero, initializer = True)
     if not default_input:
+      #turns the probabilities into pointers.
       sampled_idx = tf.cast(tf.argmax(main_input, 1), tf.int32)
-      main_input = input_fn(sampled_idx)
-
-    logits = _affine([main_input, h], 4 * self.num_units)#, scope=scope
+      pointers = input_fn(sampled_idx)
+      #use the pointers to select the correct enc1 output.
+      main_input = tf.scan(lambda init, (x,p) : x[p], (enc1,pointers), initializer = tf.zeros(self.enc_units_1))
+      #main_input.shape=[batch_size, enc_units_1] This is why enc_units_1 should be units.
+    logits = _affine([main_input, h], 4 * self.units)#, scope=scope
     i, f, o, j = _lstm_gates(logits, forget_bias=self.forget_bias)
     new_c = c * f + i * j
     #activation required?
